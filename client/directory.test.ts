@@ -25,17 +25,20 @@ type Workspace = {
 };
 
 const END_PAGE = { nextCursor: null, hasMore: false };
+const REGISTRY_ENOENT =
+  "ENOENT: no such file or directory, lstat '/Users/jachin/.paseo/projects/workspaces.json'";
 
 function fakePaseo(state: { agents: Agent[]; workspaces: Workspace[] }) {
   const agentListeners = new Set<(event: unknown) => void>();
   const workspaceListeners = new Set<(event: unknown) => void>();
   let failNextRead = false;
+  let registryMissing = false;
   const reads = { agents: 0, workspaces: 0 };
 
   const paseo = {
     agents: {
       list: async (options?: { subscribe?: unknown }) => {
-        // The seeding request carries `subscribe`; a refresh read does not.
+        if (registryMissing) throw new Error(REGISTRY_ENOENT);
         if (failNextRead && !options?.subscribe) {
           failNextRead = false;
           throw new Error("offline");
@@ -50,6 +53,7 @@ function fakePaseo(state: { agents: Agent[]; workspaces: Workspace[] }) {
     },
     workspaces: {
       list: async (options?: { subscribe?: unknown }) => {
+        if (registryMissing) throw new Error(REGISTRY_ENOENT);
         if (!options?.subscribe) reads.workspaces++;
         return { entries: state.workspaces.map((workspace) => ({ ...workspace })), pageInfo: END_PAGE };
       },
@@ -65,6 +69,7 @@ function fakePaseo(state: { agents: Agent[]; workspaces: Workspace[] }) {
     reads,
     state,
     failNextRead: () => { failNextRead = true; },
+    setRegistryMissing: (value: boolean) => { registryMissing = value; },
     emitAgent: (event: unknown) => agentListeners.forEach((fn) => fn(event)),
     emitWorkspace: (event: unknown) => workspaceListeners.forEach((fn) => fn(event)),
     listenerCounts: () => ({ agents: agentListeners.size, workspaces: workspaceListeners.size }),
@@ -228,6 +233,25 @@ describe("directory refresh", () => {
     fake.emitAgent({ kind: "upsert", agent: agent("a2", "w1") });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("reads a never-created registry as an empty directory, then recovers", async () => {
+    const fake = fakePaseo({
+      workspaces: [workspace("w1", "第一个")],
+      agents: [agent("a1", "w1")],
+    });
+    fake.setRegistryMissing(true);
+    const watcher = createDirectoryWatcher(fake.paseo);
+    await watcher.start();
+    await vi.waitFor(() => expect(watcher.snapshot()).toBeDefined());
+    // A daemon with no registry genuinely has no directory; that is not an error.
+    expect(watcher.snapshot()).toEqual({ workspaces: [], total: 0 });
+    expect(watcher.error()).toBeNull();
+
+    fake.setRegistryMissing(false);
+    fake.emitAgent({ kind: "upsert", agent: agent("a1", "w1", "closed") });
+    await vi.waitFor(() => expect(watcher.snapshot()?.total).toBe(1));
+    watcher.stop();
   });
 
   it("releases listeners and reports the failure when the observation cannot be created", async () => {

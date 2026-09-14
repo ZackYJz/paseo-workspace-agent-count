@@ -2,6 +2,7 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { useEffect, useState } from "react";
 import { agentChangeKey, workspaceChangeKey } from "../shared/changes";
 import { allPages } from "../shared/paging";
+import { readDirectoryPage } from "../shared/registry";
 import { tallyAgents } from "../shared/tally";
 
 type Paseo = PluginClientContext["paseo"];
@@ -58,17 +59,21 @@ async function readSnapshot(paseo: Paseo): Promise<DirectorySnapshot> {
   // not an empty directory, and publishing one would report every count as zero.
   const [workspaces, agentEntries] = await Promise.all([
     allPages((cursor) =>
-      paseo.workspaces.list({
-        sort: [{ key: "project_id", direction: "asc" }],
-        page: { limit: PAGE_SIZE, cursor },
-      }),
+      readDirectoryPage(() =>
+        paseo.workspaces.list({
+          sort: [{ key: "project_id", direction: "asc" }],
+          page: { limit: PAGE_SIZE, cursor },
+        }),
+      ),
     ),
     allPages((cursor) =>
-      paseo.agents.list({
-        filter: { includeArchived: true },
-        sort: [{ key: "created_at", direction: "asc" }],
-        page: { limit: PAGE_SIZE, cursor },
-      }),
+      readDirectoryPage(() =>
+        paseo.agents.list({
+          filter: { includeArchived: true },
+          sort: [{ key: "created_at", direction: "asc" }],
+          page: { limit: PAGE_SIZE, cursor },
+        }),
+      ),
     ),
   ]);
 
@@ -191,12 +196,14 @@ export function createDirectoryWatcher(paseo: Paseo): DirectoryWatcher {
         // directory updates to this session. Paseo 0.8 issues each observation
         // its own ID and reissues it on reconnect, so neither request names one.
         const [agentPage, workspacePage] = await Promise.all([
-          paseo.agents.list({
-            filter: { includeArchived: true },
-            subscribe: {},
-            page: { limit: PAGE_SIZE },
-          }),
-          paseo.workspaces.list({ subscribe: {}, page: { limit: PAGE_SIZE } }),
+          readDirectoryPage(() =>
+            paseo.agents.list({
+              filter: { includeArchived: true },
+              subscribe: {},
+              page: { limit: PAGE_SIZE },
+            }),
+          ),
+          readDirectoryPage(() => paseo.workspaces.list({ subscribe: {}, page: { limit: PAGE_SIZE } })),
         ]);
         // Seed the change keys from the same pages, or the first streaming event
         // for every record looks new and forces a full re-read of both

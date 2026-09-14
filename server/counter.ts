@@ -5,6 +5,7 @@ import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import { z } from "zod";
 import { counterRpc } from "../shared/counter";
 import { allPages } from "../shared/paging";
+import { readDirectoryPage } from "../shared/registry";
 import { tallyAgents } from "../shared/tally";
 import { watchDirectory } from "./events";
 
@@ -76,22 +77,24 @@ async function saveState(file: string, state: State) {
 }
 
 async function listWorkspaces(paseo: PaseoApi) {
-  return allPages((cursor) => paseo.workspaces.list({
+  return allPages((cursor) => readDirectoryPage(() => paseo.workspaces.list({
     sort: [{ key: "project_id", direction: "asc" }], page: { limit: PAGE_SIZE, cursor },
-  }));
+  })));
 }
 
 async function countAgents(paseo: PaseoApi) {
-  const entries = await allPages((cursor) => paseo.agents.list({
+  const entries = await allPages((cursor) => readDirectoryPage(() => paseo.agents.list({
     filter: { includeArchived: true },
     sort: [{ key: "created_at", direction: "asc" }], page: { limit: PAGE_SIZE, cursor },
-  }));
+  })));
   return tallyAgents(entries.map(({ agent }) => agent));
 }
 
 async function currentWorkspace(paseo: PaseoApi, id: string) {
   // v0.7.2's daemon honors query, but silently ignores idPrefix for workspaces.
-  const page = await paseo.workspaces.list({ filter: { query: id }, page: { limit: PAGE_SIZE } });
+  const page = await readDirectoryPage(() =>
+    paseo.workspaces.list({ filter: { query: id }, page: { limit: PAGE_SIZE } }),
+  );
   return page.entries.find((workspace) => workspace.id === id && !workspace.archivingAt);
 }
 

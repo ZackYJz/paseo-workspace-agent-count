@@ -90,6 +90,7 @@ Paseo 0.8 为每个 observation 由服务端签发 ID 并在重连时重签，�
 
 ## 已知限制
 
+- **全新 daemon 上目录列表会以 ENOENT 失败**。Paseo 0.8.0 的 workspace/agent 注册表文件是懒创建的，一个 workspace 都没建过的机器上 `workspaces.list` 抛 `ENOENT … lstat '<home>/projects/workspaces.json'` 而不是返回空页。插件把**仅限于列表调用内**的 ENOENT 读作“目录为空”（这就是事实），其他错误仍然上抛，中途读取失败仍保留上一份快照。
 - **没有 `agent.deleted` / `workspace.deleted` 生命周期事件**，删除只能靠目录订阅发现。
 - 0.7.2 上实测"部分删除/离线归档通知只发给操作发起连接"，0.8.0 未复验。归档现在多了一条 `agent.archived` / `workspace.archived` 事件通道，纯删除仍只依赖订阅。不以定时轮询掩盖这个问题。
 - 总览 surface 在 `navigation` 不可用的旧 host 上降级为不可点击的只读列表。

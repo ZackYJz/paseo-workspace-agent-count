@@ -1,5 +1,6 @@
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import { agentChangeKey, workspaceChangeKey } from "../shared/changes";
+import { readDirectoryPage } from "../shared/registry";
 
 type PaseoApi = PluginHandlerContext["paseo"];
 const SEED_PAGE_SIZE = 200;
@@ -32,8 +33,10 @@ export async function watchDirectory(paseo: PaseoApi, onChange: () => void) {
     // Paseo 0.8 issues each observation its own subscription ID and reissues it on
     // reconnect, so the request carries an empty `subscribe` instead of a chosen ID.
     const [agentPage, workspacePage] = await Promise.all([
-      paseo.agents.list({ filter: { includeArchived: true }, subscribe: {}, page: { limit: SEED_PAGE_SIZE } }),
-      paseo.workspaces.list({ subscribe: {}, page: { limit: SEED_PAGE_SIZE } }),
+      readDirectoryPage(() =>
+        paseo.agents.list({ filter: { includeArchived: true }, subscribe: {}, page: { limit: SEED_PAGE_SIZE } }),
+      ),
+      readDirectoryPage(() => paseo.workspaces.list({ subscribe: {}, page: { limit: SEED_PAGE_SIZE } })),
     ]);
     for (const { agent } of agentPage.entries) {
       if (!agents.has(agent.id)) agents.set(agent.id, agentChangeKey(agent));

@@ -13,7 +13,7 @@ function agent(id: string, workspaceId: string | null, archivedAt: string | null
 }
 const end = { nextCursor: null, hasMore: false };
 
-async function setup() {
+async function setup(options: { registryMissing?: boolean } = {}) {
   const file = join(await mkdtemp(join(tmpdir(), "paseo-counter-test-")), "state.json");
   const workspaces = [workspace()];
   const agents = [agent("a1", "w1"), agent("a2", "w1", "2026-01-01")];
@@ -31,13 +31,30 @@ async function setup() {
     emitWorkspace({ kind: "upsert", workspace: { ...w } });
     return { title };
   });
-  const workspaceList = vi.fn(async (options: { filter?: { query?: string } } = {}) => ({
-    entries: workspaces.filter((w) => !options.filter?.query || w.id.includes(options.filter.query)).map((w) => ({ ...w })),
-    pageInfo: end,
-  }));
-  const agentList = vi.fn(async () => ({ entries: [...agents], pageInfo: end }));
-  const seedAgents = vi.fn(async () => ({ entries: [...agents], pageInfo: end }));
-  const seedWorkspaces = vi.fn(async () => ({ entries: [...workspaces], pageInfo: end }));
+  // Paseo 0.8.0 creates its workspace registry lazily; a daemon that has never
+  // had a workspace answers a listing with ENOENT instead of an empty page.
+  const registryMessage =
+    "ENOENT: no such file or directory, lstat '/Users/jachin/.paseo/projects/workspaces.json'";
+  const missing = () => Promise.reject(new Error(registryMessage));
+  const workspaceList = vi.fn(async (query: { filter?: { query?: string } } = {}) => {
+    if (options.registryMissing) return missing();
+    return {
+      entries: workspaces.filter((w) => !query.filter?.query || w.id.includes(query.filter.query)).map((w) => ({ ...w })),
+      pageInfo: end,
+    };
+  });
+  const agentList = vi.fn(async () => {
+    if (options.registryMissing) return missing();
+    return { entries: [...agents], pageInfo: end };
+  });
+  const seedAgents = vi.fn(async () => {
+    if (options.registryMissing) return missing();
+    return { entries: [...agents], pageInfo: end };
+  });
+  const seedWorkspaces = vi.fn(async () => {
+    if (options.registryMissing) return missing();
+    return { entries: [...workspaces], pageInfo: end };
+  });
   const context = { paseo: {
     workspaces: {
       list: (options: Parameters<Api["workspaces"]["list"]>[0]) => options?.subscribe ? seedWorkspaces() : workspaceList(options),
@@ -343,5 +360,21 @@ describe("creation safety", () => {
     s.agents[0].agent.status = "idle";
     s.emitAgent({ kind: "upsert", agent: { ...s.agents[0].agent } });
     await vi.waitFor(() => expect(s.workspaces[0].title).toBe("(2) 开发空间"));
+  });
+});
+
+describe("a daemon whose directory registry was never created", () => {
+  it("reads an empty directory instead of surfacing the daemon's ENOENT", async () => {
+    const s = await setup({ registryMissing: true });
+    const result = await s.run({ action: "sync" }, s.context);
+    expect(result).toEqual({ paused: false, updated: 0 });
+    expect(s.setTitle).not.toHaveBeenCalled();
+  });
+
+  it("restores nothing and keeps the ledger when no workspace can be seen", async () => {
+    const s = await setup({ registryMissing: true });
+    const result = await s.run({ action: "restore" }, s.context);
+    expect(result).toEqual({ paused: true, updated: 0 });
+    expect(s.setTitle).not.toHaveBeenCalled();
   });
 });
